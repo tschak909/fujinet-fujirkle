@@ -55,14 +55,25 @@ static int inStrip(unsigned char cy) { return cy >= L_DICE_Y - 2 && cy <= L_DICE
 // Graphics stubs
 //////////////////////////////////////////////////////////////////////////////
 
+static char keptRow[16];
+static int  keptN;
+
 void drawDie(unsigned char dx, unsigned char dy, unsigned char s, bool sel, bool hi) {
-  (void)hi;
   if (inStrip(dy)) {
     if (dx >= L_DICE_X)
       LOG("drawDie      strip col %2u face %u%s", dx, s, sel ? " (kept)" : "");
     else
-      LOG("drawDie      button col %2u face %u", dx, s);
+      LOG("drawDie      button col %2u face %u%s", dx, s, hi ? "  <<LIT>>" : "");
   }
+  else if (keptN < 12)
+    keptRow[keptN++] = (char)('0' + s);
+}
+
+void keptFlush(const char *what) {
+  keptRow[keptN] = 0;
+  if (keptN)
+    LOG("KEPT BOX %s: \"%s\"", what, keptRow);
+  keptN = 0;
 }
 
 void drawDieSpace(unsigned char dx, unsigned char dy) {
@@ -70,6 +81,7 @@ void drawDieSpace(unsigned char dx, unsigned char dy) {
 }
 
 void drawSpace(unsigned char sx, unsigned char sy, unsigned char w) {
+  if (sy == 15) LOG("PROMPT ROW: <blank>");
   if (inStrip(sy)) LOG("drawSpace    strip col %2u w %u", sx, w);
 }
 
@@ -135,8 +147,10 @@ void pause(unsigned char f) { (void)f; }
 void readCommonInput(void) { input.key = 0; input.trigger = false; input.dirX = input.dirY = 0; }
 void clearCommonInput(void) { readCommonInput(); }
 
-void resetTimer(void) {}
-uint16_t getTime(void) { return 0; }
+// Advances so timed holds actually expire here the way they do on hardware
+static uint16_t hostJiffies = 0;
+void resetTimer(void) { hostJiffies = 0; }
+uint16_t getTime(void) { return hostJiffies += 4; }
 void quit(void) {}
 void housekeeping(void) {}
 uint8_t getJiffiesPerSecond(void) { return 60; }
@@ -196,6 +210,7 @@ static void poll(const char *label) {
          label, clientState.game.dice, clientState.game.keptDice,
          clientState.game.activePlayer, clientState.game.validMoves);
   processStateChange();
+  keptFlush("after poll");
 
   // main.c: apiCallWait passes go by before the next poll, and the client may
   // push that back itself
@@ -206,6 +221,7 @@ static void poll(const char *label) {
     handleAnimation();
     if (++p > 2000) break;
   }
+  keptFlush("after holds");
 }
 
 int main(void) {
@@ -247,9 +263,11 @@ int main(void) {
   strcpy(clientState.game.selectable, "000000");
   clientState.game.validMoves = 0;
   strcpy(clientState.game.prompt, "fujirkle! no score");
+  clientState.game.status = STATUS_FUJIRKLE;
   poll("FUJIRKLE - the losing roll arrives");
 
   clientState.game.moveTime = 3; poll("fujirkle held (1)");
+  clientState.game.status = 0;
   clientState.game.moveTime = 2; poll("fujirkle held (2)");
   clientState.game.moveTime = 1; poll("fujirkle held (3)");
 
@@ -263,6 +281,41 @@ int main(void) {
   setWireWord(&clientState.game.turnScore0, &clientState.game.turnScore1, 0);
   strcpy(clientState.game.prompt, "1ai bob rolling");
   poll("TURN PASSES after fujirkle");
+
+  // --- A bot's move: the server has already committed its pick and re-rolled,
+  // --- so the pick only reaches us as keepRoll over the dice we had before.
+  clientState.game.activePlayer = 1;
+  clientState.game.validMoves = 0;
+  strcpy(clientState.game.dice, "24");
+  strcpy(clientState.game.keptDice, "1155");
+  strcpy(clientState.game.selectable, "000000");
+  strcpy(clientState.game.keepRoll, "1010");
+  strcpy(clientState.game.prompt, "1ai clyd rolling");
+  poll("BOT PICK - keepRoll 1010 over the previous dice");
+
+  // --- The next pick carries the SAME mask. Deduping on the mask alone swallowed
+  // --- this one, which is why bank markers went missing now and then.
+  strcpy(clientState.game.dice, "35");
+  strcpy(clientState.game.keptDice, "1155");
+  strcpy(clientState.game.keepRoll, "1010");
+  poll("SAME MASK AGAIN - must still replay");
+
+  // --- A bot banks and the turn comes to US. validMoves is already set, so a
+  // --- guard on isMyTurn() would have thrown this pick away.
+  clientState.game.activePlayer = 0;
+  clientState.game.validMoves = MOVE_ROLL | MOVE_BANK;
+  strcpy(clientState.game.dice, "142536");
+  strcpy(clientState.game.keptDice, "");
+  // Their last two dice, both set aside - the mask is always exactly as long as
+  // the pool it applies to, so "11" over the "35" they were showing
+  strcpy(clientState.game.keepRoll, "11");
+  strcpy(clientState.game.prompt, "your turn");
+  // The bank has to land in their score, or bankedDelta sees nothing and the
+  // turn hold - and the kept box that rides on it - never runs
+  setPlayer(1, "1ai bob", 2600);
+  poll("BOT BANKS INTO OUR TURN - pick must still replay");
+
+  strcpy(clientState.game.keepRoll, "");
 
   // --- Hot dice: every die set aside, so the server grants a fresh six and
   // --- clears KeptDice while the turn score carries over
@@ -285,6 +338,50 @@ int main(void) {
   strcpy(clientState.game.selectable, "100010");
   strcpy(clientState.game.prompt, "1ai clyd's turn");
   poll("next player's opening roll");
+
+  // A bot's hot dice: the banner belongs to the pick that earned it and must
+  // survive the pause showing it, then give way to their name before the fresh
+  // six tumble - not to the next player's name, since the turn has not moved.
+  clientState.game.activePlayer = 1;
+  clientState.game.validMoves = 0;
+  strcpy(clientState.game.prompt, "1ai clyd's turn");
+  poll("bot's turn opens");
+
+  // Four in the pool means two are already set aside - hot dice must show all six
+  strcpy(clientState.game.dice, "1155");
+  strcpy(clientState.game.keptDice, "24");
+  strcpy(clientState.game.keepRoll, "");
+  poll("bot mid-turn");
+
+  strcpy(clientState.game.keepRoll, "1111");
+  strcpy(clientState.game.dice, "162534");
+  strcpy(clientState.game.keptDice, "");
+  setWireWord(&clientState.game.turnScore0, &clientState.game.turnScore1, 800);
+  strcpy(clientState.game.prompt, "hot dice! roll all six again");
+  poll("BOT HOT DICE - picked every die");
+  poll("bot hot dice, held");
+
+  // A bot fujirkles: same message and sting as our own, on their dice
+  clientState.game.activePlayer = 1;
+  clientState.game.validMoves = 0;
+  clientState.game.status = 0;
+  strcpy(clientState.game.keepRoll, "");
+  strcpy(clientState.game.keptDice, "15");
+  strcpy(clientState.game.dice, "2346");
+  strcpy(clientState.game.prompt, "1ai clyd's turn");
+  poll("bot mid-turn, before the bad roll");
+
+  // Their pick is still on the wire when the bad roll lands - the server only
+  // clears KeepRoll when the fujirkled turn actually ends
+  strcpy(clientState.game.keepRoll, "1000");
+  strcpy(clientState.game.dice, "234");
+  strcpy(clientState.game.keptDice, "152");
+  strcpy(clientState.game.selectable, "000");
+  strcpy(clientState.game.prompt, "fujirkle! no score");
+  clientState.game.status = STATUS_FUJIRKLE;
+  setWireWord(&clientState.game.turnScore0, &clientState.game.turnScore1, 0);
+  poll("BOT FUJIRKLE - message and sting expected");
+  poll("bot fujirkle, held");
 
   printf("\n");
   return 0;

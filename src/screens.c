@@ -1,4 +1,3 @@
-#ifndef LAYOUT_DEMO
 #include <stdlib.h>
 #include "stateclient.h"
 #include "screens.h"
@@ -141,18 +140,23 @@ void showHelpScreen() {
   hy++;
   helpLn(2, "straight 1-6 - 1500");
   helpLn(2, "three pairs  - 1500");
-  hy++;
-  helpLn(2, "three pairs = 3 DIFFERENT");
+  helpLn(2, "three pairs: 3 DIFFERENT");
   helpLn(2, "PAIRS. four AND A pair");
   helpLn(2, "IS NOT.");
-  helpLn(2, "OUT OF time? BEST DICE");
+  helpLn(2, "OUT OF time - BEST DICE");
   helpLn(2, "ARE banked FOR YOU.");
   #else
   hy=3;centerTextAlt(hy, "single dice");
   hy++;
   helpLn(5, "EACH 1 SET ASIDE - 100 POINTS");
   helpLn(5, "EACH 5 SET ASIDE - 50 POINTS");
+  // A 24 row screen is one short here, and would land the last line on the
+  // status row, so it gives up a gap.
+  #if HEIGHT < 25
+  hy++;centerTextAlt(hy, "sets");
+  #else
   hy+=2;centerTextAlt(hy, "sets");
+  #endif
   hy++;
   helpLn(4, "three OF A KIND - FACE VALUE x 100");
   helpLn(4, "  EXCEPT three 1s, WHICH SCORE 1000");
@@ -190,7 +194,12 @@ void welcomeActionVerifyServerDetails() {
       if (tempBuffer[i]=='?') {
         strcpy(query, tempBuffer+i);
         tempBuffer[i]=0;
-        strcpy(serverEndpoint, tempBuffer);
+
+        // The table still comes from the lobby, but the server does not once
+        // the debug flag has pointed us at localhost
+        if (prefs.debugFlag != 0xFF)
+          strcpy(serverEndpoint, tempBuffer);
+
         break;
       }
     }
@@ -771,4 +780,3 @@ void showInGameMenuScreen() {
 
 
 
-#endif /* LAYOUT_DEMO */

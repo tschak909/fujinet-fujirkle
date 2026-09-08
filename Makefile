@@ -1,6 +1,6 @@
 PRODUCT = fujirkle
 PRODUCT_UPPER = FUJIRKLE
-PLATFORMS = coco msdos
+PLATFORMS = coco msdos atari apple2
 
 # CoCo targets:
 #   make coco        → CoCo 1/2 build
@@ -25,6 +25,9 @@ ifeq ($(PLATFORM),msdos)
   FUJINET_LIB = https://github.com/FozzTexx/fujinet-lib-experimental.git
 endif
 
+# Apple II: custom HGR-aware linker config
+LDFLAGS_EXTRA_APPLE2 += -C src/apple2/apple2-hgr.cfg
+
 # CoCo: optimization + memory layout
 CFLAGS_EXTRA_COCO  += -fomit-frame-pointer -O2 -Wno-const
 
@@ -38,10 +41,6 @@ ifeq ($(MAKE_COCO3),COCO3)
 else
   COCO_ORG = 1A00
   LDFLAGS_EXTRA_COCO += --org=$(COCO_ORG) --limit=7B00
-endif
-
-ifeq ($(LAYOUT_DEMO),1)
-  CFLAGS_EXTRA_COCO += -DLAYOUT_DEMO
 endif
 
 # Support 'make coco3'
@@ -85,27 +84,3 @@ coco-dist:
 	decb copy -b -2 $(R2R_PRODUCT)1.bin $(COCO_DISK),FUJIRKL1.BIN
 	decb copy -b -2 $(R2R_PRODUCT)3.bin $(COCO_DISK),FUJIRKL3.BIN
 
-# Layout mock-up disk: same auto-detecting loader, but both binaries show the
-# candidate board layouts instead of connecting to a server.
-DEMO_DISK = r2r/coco/fujirkle-demo.dsk
-
-coco-demo:
-	$(MAKE) clean
-	rm -rf build
-	$(MAKE) coco LAYOUT_DEMO=1
-	mv $(R2R_PRODUCT).bin $(R2R_PRODUCT)1.bin
-
-	rm -rf build
-	$(MAKE) coco MAKE_COCO3=COCO3 LAYOUT_DEMO=1
-	mv $(R2R_PRODUCT).bin $(R2R_PRODUCT)3.bin
-
-	cmoc -o $(R2R_PRODUCT).bin support/coco/loader.c
-
-	$(RM) $(DEMO_DISK)
-	decb dskini $(DEMO_DISK)
-	mkdir -p build/coco
-	echo RUNM\"$(PRODUCT_UPPER)\" > build/coco/autoexec.bas
-	decb copy -t -0 build/coco/autoexec.bas $(DEMO_DISK),AUTOEXEC.BAS
-	decb copy -b -2 $(R2R_PRODUCT).bin  $(DEMO_DISK),$(PRODUCT_UPPER).BIN
-	decb copy -b -2 $(R2R_PRODUCT)1.bin $(DEMO_DISK),FUJIRKL1.BIN
-	decb copy -b -2 $(R2R_PRODUCT)3.bin $(DEMO_DISK),FUJIRKL3.BIN
